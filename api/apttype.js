@@ -10,59 +10,36 @@ export default async function handler(req, res) {
 
   const bunVal = bun.padStart(4, '0');
   const jiVal  = (ji && ji !== '0') ? ji.padStart(4, '0') : '0000';
+  const base   = `https://apis.data.go.kr/1613000/BldRgstHubService`;
+  const common = `?serviceKey=${KEY}&sigunguCd=${sigunguCd}&bjdongCd=${bjdongCd}&platGbCd=0&bun=${bunVal}&ji=${jiVal}&numOfRows=100&pageNo=1&_type=json`;
 
-  try {
-    // 건축물대장 전유공용면적 API — 동/호별 전용면적 목록
-    const url =
-      `https://apis.data.go.kr/1613000/BldRgstHubService/getBrExposPubuseAreaInfo` +
-      `?serviceKey=${KEY}` +
-      `&sigunguCd=${sigunguCd}` +
-      `&bjdongCd=${bjdongCd}` +
-      `&platGbCd=0` +
-      `&bun=${bunVal}` +
-      `&ji=${jiVal}` +
-      `&numOfRows=1000&pageNo=1&_type=json`;
+  // 사용 가능한 엔드포인트 목록 시도
+  const endpoints = [
+    'getBrRecapTitleInfo',   // 표제부
+    'getBrFlrOulnInfo',      // 층별개요
+    'getBrWclfInfo',         // 위반건축물
+    'getBrAtchJibunInfo',    // 부속지번
+  ];
 
-    const r    = await fetch(url);
-    const text = await r.text();
+  const results = {};
 
-    let data;
-    try { data = JSON.parse(text); }
-    catch(e) {
-      return res.status(200).json({ result: null, message: 'JSON 파싱 실패', raw: text.slice(0, 300) });
+  for (const ep of endpoints) {
+    try {
+      const r    = await fetch(`${base}/${ep}${common}`);
+      const text = await r.text();
+      try {
+        const json = JSON.parse(text);
+        const cnt  = json?.response?.body?.totalCount || 0;
+        results[ep] = { ok: true, totalCount: cnt, sample: json?.response?.body?.items?.item ? 
+          (Array.isArray(json.response.body.items.item) ? json.response.body.items.item[0] : json.response.body.items.item) 
+          : null };
+      } catch(e) {
+        results[ep] = { ok: false, raw: text.slice(0, 100) };
+      }
+    } catch(e) {
+      results[ep] = { ok: false, error: e.message };
     }
-
-    const raw  = data?.response?.body?.items?.item;
-    const list = raw ? (Array.isArray(raw) ? raw : [raw]) : [];
-
-    if (list.length === 0) {
-      return res.status(200).json({ result: null, message: '전유부 데이터 없음', debug: { sigunguCd, bjdongCd, bunVal, jiVal } });
-    }
-
-    // 전용면적만 추출 (주거 전용 + 구분 0: 전유)
-    const areaMap = {};
-    list.forEach(item => {
-      const area = parseFloat(item.areaExclu || item.area || 0);
-      if (area <= 0) return;
-      // 소수점 첫째 자리까지로 그룹핑
-      const key = Math.round(area * 10) / 10;
-      if (!areaMap[key]) areaMap[key] = 0;
-      areaMap[key]++;
-    });
-
-    // 타입 배열로 변환 (세대수 1 이상만)
-    const types = Object.entries(areaMap)
-      .filter(([, cnt]) => cnt >= 1)
-      .map(([area, cnt]) => ({
-        dedicArea: parseFloat(area),
-        hhldCnt:   cnt,
-        pyeong:    Math.round(parseFloat(area) / 3.3058),
-      }))
-      .sort((a, b) => a.dedicArea - b.dedicArea);
-
-    return res.status(200).json({ result: { types, totalRows: list.length } });
-
-  } catch (e) {
-    return res.status(500).json({ error: e.message });
   }
+
+  return res.status(200).json({ debug: true, results });
 }
