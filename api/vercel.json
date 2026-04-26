@@ -1,7 +1,0 @@
-{
-  "functions": {
-    "api/building.js": {
-      "runtime": "edge"
-    }
-  }
-}
