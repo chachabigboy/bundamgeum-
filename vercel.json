@@ -1,5 +1,10 @@
 {
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" }
-  ]
+  "functions": {
+    "api/building.js": {
+      "runtime": "edge"
+    },
+    "api/apttype.js": {
+      "runtime": "edge"
+    }
+  }
 }
