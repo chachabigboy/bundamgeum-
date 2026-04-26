@@ -1,10 +1,1 @@
-{
-  "functions": {
-    "api/building.js": {
-      "runtime": "edge"
-    },
-    "api/apttype.js": {
-      "runtime": "edge"
-    }
-  }
-}
+{}
