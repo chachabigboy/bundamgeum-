@@ -1,111 +1,65 @@
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
-  const { sigunguCd, bjdongCd, bun, ji, bldNm } = req.query;
+  const { complexNo, keyword } = req.query;
   const KEY = '9470763e33c0df8c9dfa6af03edbfbece3ac2adb4818385cbe32c2368b974ad5';
 
-  if (!sigunguCd) return res.status(400).json({ error: '파라미터 누락' });
+  const HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Referer': 'https://new.land.naver.com/',
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'ko-KR,ko;q=0.9',
+    'authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',
+  };
 
   try {
-    const sidoCd = sigunguCd.slice(0, 2);
-    const sggCd  = sigunguCd;
+    // Mode 1: 단지번호로 상세 조회
+    if (complexNo) {
+      const url = `https://new.land.naver.com/api/complexes/${complexNo}/overview`;
+      const r   = await fetch(url, { headers: HEADERS });
+      const txt = await r.text();
+      try {
+        const data = JSON.parse(txt);
+        // 평형 목록 추출
+        const pyeongList = data?.complexPyeongDetailList || data?.pyeongList || [];
+        const types = pyeongList.map(p => ({
+          name:      p.pyeongName     || p.pyeongTypeName || '',
+          dedicArea: parseFloat(p.exclusiveArea || p.dedicArea || 0),
+          supplyArea: parseFloat(p.supplyArea || 0),
+          hhldCnt:   parseInt(p.householdCountByPyeong || p.hhldCnt || 0),
+          pyeong:    Math.round(parseFloat(p.exclusiveArea || 0) / 3.3058),
+        })).filter(t => t.dedicArea > 0);
 
-    // Step 1: AptBasisInfoServiceV4로 단지 검색 (시도+시군구 기준)
-    const searchUrl =
-      `https://apis.data.go.kr/1613000/AptBasisInfoServiceV4/getAphuseInfo` +
-      `?serviceKey=${KEY}&sidoCd=${sidoCd}&sggCd=${sggCd}` +
-      `&numOfRows=200&pageNo=1&_type=json`;
-
-    const r1   = await fetch(searchUrl);
-    const txt1 = await r1.text();
-
-    let complexList = [];
-    try {
-      const d1  = JSON.parse(txt1);
-      const raw = d1?.response?.body?.items?.item;
-      complexList = raw ? (Array.isArray(raw) ? raw : [raw]) : [];
-    } catch(e) {
-      return res.status(200).json({ result: null, message: 'AptBasisInfo 파싱 실패', raw: txt1.slice(0,200) });
+        return res.status(200).json({
+          result: {
+            complexNo,
+            complexName: data?.complexName || data?.name || '',
+            types: types.length > 0 ? types : null,
+          },
+          raw: data
+        });
+      } catch(e) {
+        return res.status(200).json({ result: null, raw: txt.slice(0, 300) });
+      }
     }
 
-    if (!complexList.length) {
-      return res.status(200).json({ result: null, message: '단지 목록 없음', sidoCd, sggCd });
+    // Mode 2: 키워드로 단지 검색
+    if (keyword) {
+      const url = `https://new.land.naver.com/api/complexes/single-markers/2.0?complexNo=${keyword}`;
+      const r2  = await fetch(
+        `https://new.land.naver.com/api/search?keyword=${encodeURIComponent(keyword)}&pageSize=5`,
+        { headers: HEADERS }
+      );
+      const txt2 = await r2.text();
+      try {
+        const d2 = JSON.parse(txt2);
+        return res.status(200).json({ result: null, searchResult: d2 });
+      } catch(e) {
+        return res.status(200).json({ result: null, raw: txt2.slice(0, 300) });
+      }
     }
 
-    // Step 2: 건물명으로 단지 매칭
-    const nameKw = (bldNm || '').replace(/\s/g,'').replace(/아파트/g,'');
-    let matched  = null;
-
-    if (nameKw) {
-      matched = complexList.find(c => {
-        const cn = (c.kaptName||'').replace(/\s/g,'').replace(/아파트/g,'');
-        return cn.includes(nameKw) || nameKw.includes(cn);
-      });
-    }
-
-    // 번지로 매칭 시도
-    if (!matched && bun) {
-      const bunNum = parseInt(bun, 10);
-      matched = complexList.find(c => {
-        const addr = c.kaptAddr || '';
-        return addr.includes(`${bunNum}번지`) || addr.includes(` ${bunNum}-`) || addr.endsWith(` ${bunNum}`);
-      });
-    }
-
-    // 매칭 실패 시 후보 반환
-    if (!matched) {
-      return res.status(200).json({
-        result:     null,
-        message:    '단지 자동 매칭 실패',
-        candidates: complexList.slice(0,10).map(c => ({
-          kaptCode: c.kaptCode,
-          name:     c.kaptName,
-          addr:     c.kaptAddr,
-        }))
-      });
-    }
-
-    // Step 3: kaptCode로 전용면적별 세대현황 조회
-    const typeUrl =
-      `https://apis.data.go.kr/1613000/AptBasisInfoServiceV4/getAphuseInfo` +
-      `?serviceKey=${KEY}&kaptCode=${matched.kaptCode}&_type=json`;
-
-    const r2   = await fetch(typeUrl);
-    const txt2 = await r2.text();
-
-    let typeItems = [];
-    try {
-      const d2  = JSON.parse(txt2);
-      const raw = d2?.response?.body?.items?.item;
-      typeItems = raw ? (Array.isArray(raw) ? raw : [raw]) : [];
-    } catch(e) {}
-
-    // 전용면적별 세대수 집계
-    const areaMap = {};
-    typeItems.forEach(item => {
-      const area = parseFloat(item.dedicArea || item.exluUseAr || 0);
-      if (area <= 0) return;
-      const key = Math.round(area * 10) / 10;
-      areaMap[key] = (areaMap[key] || 0) + parseInt(item.hhldCnt || 1, 10);
-    });
-
-    const types = Object.entries(areaMap)
-      .map(([area, cnt]) => ({
-        dedicArea: parseFloat(area),
-        hhldCnt:   cnt,
-        pyeong:    Math.round(parseFloat(area) / 3.3058),
-      }))
-      .sort((a, b) => a.dedicArea - b.dedicArea);
-
-    return res.status(200).json({
-      result: {
-        kaptCode: matched.kaptCode,
-        kaptName: matched.kaptName,
-        kaptAddr: matched.kaptAddr,
-        types:    types.length > 0 ? types : null,
-      },
-      debug: { typeItemsCount: typeItems.length, areaMap, sample: typeItems[0] }
-    });
+    return res.status(400).json({ error: 'complexNo 또는 keyword 파라미터 필요' });
 
   } catch(e) {
     return res.status(500).json({ error: e.message });
