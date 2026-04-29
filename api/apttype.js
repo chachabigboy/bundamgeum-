@@ -1,79 +1,156 @@
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
-  const { sigunguCd, bjdongCd, bun, ji } = req.query;
+  const { sigunguCd, bjdongCd, bun, ji, kaptCode } = req.query;
   const KEY = '9470763e33c0df8c9dfa6af03edbfbece3ac2adb4818385cbe32c2368b974ad5';
-
-  if (!sigunguCd || !bjdongCd || !bun) {
-    return res.status(400).json({ error: '파라미터 누락' });
-  }
-
-  const bunVal = String(bun).padStart(4, '0');
-  const jiVal  = (ji && ji !== '0') ? String(ji).padStart(4, '0') : '0000';
-
-  // 전유공용면적 조회 — 호별 전용면적 목록
-  const url = new URL('https://apis.data.go.kr/1613000/BldRgstHubService/getBrExposPubuseAreaInfo');
-  url.searchParams.set('serviceKey',  KEY);
-  url.searchParams.set('sigunguCd',   sigunguCd);
-  url.searchParams.set('bjdongCd',    bjdongCd);
-  url.searchParams.set('platGbCd',    '0');
-  url.searchParams.set('bun',         bunVal);
-  url.searchParams.set('ji',          jiVal);
-  url.searchParams.set('_type',       'json');
-  url.searchParams.set('numOfRows',   '1000');
-  url.searchParams.set('pageNo',      '1');
+  const BASE = 'https://apis.data.go.kr/1613000/AptBasisInfoServiceV4';
 
   try {
-    const r    = await fetch(url.toString());
-    const text = await r.text();
+    // ── Mode A: kaptCode 직접 조회 ──────────────────────────
+    if (kaptCode) {
+      const url = `${BASE}/getAphusBassInfoV4?serviceKey=${KEY}&kaptCode=${kaptCode}&_type=json`;
+      const r   = await fetch(url);
+      const txt = await r.text();
+      try {
+        const d    = JSON.parse(txt);
+        const item = d?.response?.body?.item;
+        if (!item) return res.status(200).json({ result: null, message: '단지 정보 없음' });
 
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch(e) {
-      return res.status(200).json({ result: null, message: 'JSON 파싱 실패', raw: text.slice(0, 300) });
+        // 전용면적별 세대현황 파싱 (예: "59㎡:120세대|84㎡:80세대")
+        const types = parseTypeStr(item.hhldCountHouseSpace || item.exclArea || '');
+
+        return res.status(200).json({
+          result: {
+            kaptCode:   item.kaptCode,
+            kaptName:   item.kaptName,
+            kaptAddr:   item.kaptAddr,
+            totArea:    parseFloat(item.kaptTarea  || 0),  // 건축물대장 연면적
+            platArea:   parseFloat(item.kaptLarea  || 0),  // 대지면적
+            vlRat:      parseFloat(item.kaptVlRat  || 0),  // 용적률
+            bcRat:      parseFloat(item.kaptBcRat  || 0),  // 건폐율
+            hhldCnt:    parseInt(item.kaptdaCnt    || 0),  // 총세대수
+            dongCnt:    parseInt(item.kaptdongCnt  || 0),  // 동수
+            types,
+          },
+          raw: item
+        });
+      } catch(e) {
+        return res.status(200).json({ result: null, raw: txt.slice(0, 300) });
+      }
     }
 
-    const totalCount = data?.response?.body?.totalCount || 0;
-    const raw  = data?.response?.body?.items?.item;
-    const list = raw ? (Array.isArray(raw) ? raw : [raw]) : [];
+    // ── Mode B: 법정동코드로 단지 목록 조회 후 매칭 ────────
+    if (!sigunguCd) return res.status(400).json({ error: '파라미터 누락' });
 
-    if (!list.length) {
+    // 법정동코드 10자리 = sigunguCd(5) + bjdongCd(5)
+    const bjdCode = sigunguCd + (bjdongCd || '');
+
+    // 법정동코드로 단지 목록 검색
+    const listUrl = `${BASE}/getAphusBassInfoV4?serviceKey=${KEY}&bjdCode=${bjdCode}&_type=json&numOfRows=100&pageNo=1`;
+    const r2  = await fetch(listUrl);
+    const txt2 = await r2.text();
+
+    let complexList = [];
+    try {
+      const d2  = JSON.parse(txt2);
+      const raw = d2?.response?.body?.items?.item;
+      complexList = raw ? (Array.isArray(raw) ? raw : [raw]) : [];
+    } catch(e) {
+      return res.status(200).json({ result: null, message: '파싱 실패', raw: txt2.slice(0, 300) });
+    }
+
+    if (!complexList.length) {
       return res.status(200).json({
         result: null,
-        message: '데이터 없음',
-        totalCount,
-        debug: { sigunguCd, bjdongCd, bunVal, jiVal }
+        message: '단지 목록 없음',
+        debug: { bjdCode, listUrl }
       });
     }
 
-    // 전용면적(areaExcluUse)별로 세대수 집계
-    // 전용구분(exposPubuseGbCd): 1=전유, 2=공용 → 전유만 필터
-    const areaMap = {};
-    list.forEach(item => {
-      // 전유부만
-      if (item.exposPubuseGbCd && item.exposPubuseGbCd !== '1') return;
-      const area = parseFloat(item.areaExcluUse || item.area || 0);
-      if (area <= 0) return;
-      const key = Math.round(area * 10) / 10;
-      areaMap[key] = (areaMap[key] || 0) + 1;
-    });
+    // 번지로 단지 매칭
+    const bunNum = parseInt(bun || '0', 10);
+    let matched  = null;
 
-    const types = Object.entries(areaMap)
-      .filter(([, cnt]) => cnt >= 1)
-      .map(([area, cnt]) => ({
-        dedicArea:  parseFloat(area),
-        hhldCnt:    cnt,
-        pyeong:     Math.round(parseFloat(area) / 3.3058),
-      }))
-      .sort((a, b) => a.dedicArea - b.dedicArea);
+    if (bunNum > 0) {
+      matched = complexList.find(c => {
+        const addr = c.kaptAddr || '';
+        return addr.includes(`${bunNum}번지`) ||
+               addr.includes(` ${bunNum}-`)   ||
+               addr.endsWith(` ${bunNum}`)     ||
+               addr.includes(` ${bunNum} `);
+      });
+    }
 
-    return res.status(200).json({
-      result: { types, totalRows: list.length },
-      debug: { areaMap, sample: list[0] }
-    });
+    // 번지 매칭 실패 시 후보 목록 반환
+    if (!matched) {
+      return res.status(200).json({
+        result: null,
+        message: '단지 자동 매칭 실패 — 후보 목록 반환',
+        candidates: complexList.slice(0, 10).map(c => ({
+          kaptCode: c.kaptCode,
+          name:     c.kaptName,
+          addr:     c.kaptAddr,
+        }))
+      });
+    }
+
+    // 매칭된 단지의 상세 조회
+    const detailUrl = `${BASE}/getAphusBassInfoV4?serviceKey=${KEY}&kaptCode=${matched.kaptCode}&_type=json`;
+    const r3   = await fetch(detailUrl);
+    const txt3 = await r3.text();
+    try {
+      const d3   = JSON.parse(txt3);
+      const item = d3?.response?.body?.item || matched;
+      const types = parseTypeStr(item.hhldCountHouseSpace || item.exclArea || '');
+
+      return res.status(200).json({
+        result: {
+          kaptCode: item.kaptCode,
+          kaptName: item.kaptName,
+          kaptAddr: item.kaptAddr,
+          totArea:  parseFloat(item.kaptTarea || 0),
+          platArea: parseFloat(item.kaptLarea || 0),
+          vlRat:    parseFloat(item.kaptVlRat || 0),
+          bcRat:    parseFloat(item.kaptBcRat || 0),
+          hhldCnt:  parseInt(item.kaptdaCnt   || 0),
+          dongCnt:  parseInt(item.kaptdongCnt || 0),
+          types,
+        },
+        raw: item
+      });
+    } catch(e) {
+      return res.status(200).json({ result: null, raw: txt3.slice(0, 300) });
+    }
 
   } catch(e) {
     return res.status(500).json({ error: e.message });
   }
+}
+
+// 전용면적별 세대현황 문자열 파싱
+// 형식 예: "59.99㎡:120/84.98㎡:80" 또는 "59.99 84.98" 등
+function parseTypeStr(str) {
+  if (!str) return null;
+  const types = [];
+
+  // 숫자 추출
+  const matches = str.match(/[\d.]+/g);
+  if (!matches) return null;
+
+  // 면적만 추출 (200 이하 값)
+  const areas = [...new Set(
+    matches
+      .map(Number)
+      .filter(n => n > 10 && n < 200)
+  )].sort((a, b) => a - b);
+
+  areas.forEach(area => {
+    types.push({
+      dedicArea: area,
+      pyeong:    Math.round(area / 3.3058),
+      hhldCnt:   0, // 상세 조회에서 채워질 예정
+    });
+  });
+
+  return types.length > 0 ? types : null;
 }
