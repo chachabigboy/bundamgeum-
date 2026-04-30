@@ -317,6 +317,7 @@ function selectAddr(i){
   document.getElementById('addr-input').value=doc.address_name;
   document.getElementById('ac-list').classList.add('hidden');
   st.addrDone=true;
+  window._lastAddrDoc = doc;
   const lat=parseFloat(doc.y), lng=parseFloat(doc.x);
   document.getElementById('addr-ok').innerHTML=
     `<b>위치 확인 완료</b> — ${doc.address_name}<br>`+
@@ -328,11 +329,8 @@ function selectAddr(i){
   const gu=(doc.address?.region_2depth_name||'').replace('구','');
   autoPrice(gu);
 
-  // 건축물대장 자동 조회
+  // 건축물대장 자동 조회 (완료 후 fetchAptTypes 자동 호출)
   fetchLandArea(lng, lat, doc);
-
-  // 평형 타입 자동 조회
-  fetchAptTypes(doc);
 }
 
 // 건축물대장 총괄표제부 API — 대지면적 + 용적률 + 세대수 자동 조회
@@ -402,16 +400,14 @@ async function fetchLandArea(lng, lat, addrDoc){
 
 
 // 공동주택 기본정보 API — 전용면적별 세대현황 조회
-async function fetchAptTypes(addrDoc){
+async function fetchAptTypes(addrDoc, buildingName){
   const addr    = addrDoc.address || {};
   const bCode   = addr.b_code    || '';
   const sigunguCd = bCode.slice(0,5);
   const bjdongCd  = bCode.slice(5,10);
   const bun     = addr.main_address_no || '0';
   const ji      = addr.sub_address_no  || '0';
-
-  // 건물명은 building API에서 받은 값 재활용
-  const bldNm = document.querySelector('.api-hint')?.textContent?.match(/— (.+?) \(/)?.[1] || '';
+  const bldNm   = buildingName || '';
 
   const typeGrid = document.getElementById('own-grid');
   typeGrid.innerHTML = '<div style="font-size:13px;color:#888;padding:8px 0"><span style="display:inline-block;width:12px;height:12px;border:2px solid #B5D4F4;border-top-color:#185FA5;border-radius:50%;animation:sp .6s linear infinite;margin-right:6px;vertical-align:middle"></span>평형 정보 조회 중...</div>';
