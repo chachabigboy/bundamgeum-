@@ -97,15 +97,35 @@ function buildResult(item) {
 function extractTypes(item) {
   if (!item) return null;
   const types = [];
+
+  // 1. kaptMparea 버킷 (60/85/135/136) 세대수 매핑
+  const bucketMap = {};
   ['60','85','135','136'].forEach(key => {
     const cnt = parseInt(item[`kaptMparea${key}`] || 0);
-    if (cnt > 0) types.push({ dedicArea: parseFloat(key), hhldCnt: cnt, pyeong: Math.round(parseFloat(key)/3.3058) });
+    if (cnt > 0) bucketMap[parseFloat(key)] = cnt;
   });
-  if (!types.length && item.privArea) {
-    item.privArea.split(',').forEach(s => {
-      const a = parseFloat(s.trim());
-      if (a > 0) types.push({ dedicArea: a, hhldCnt: 0, pyeong: Math.round(a/3.3058) });
+
+  // 2. privArea: 실제 전용면적 목록 (쉼표 구분)
+  // 예: "56.12,84.98,114.03,..." → 실제 타입별 면적
+  const privAreas = (item.privArea || '').split(',')
+    .map(s => parseFloat(s.trim()))
+    .filter(a => a > 0 && a < 300)
+    .filter((v,i,a) => a.indexOf(v) === i) // 중복 제거
+    .sort((a,b) => a-b);
+
+  if (privAreas.length > 0) {
+    privAreas.forEach(area => {
+      // 가장 가까운 버킷의 세대수 매핑
+      const bucket = Object.keys(bucketMap).map(Number).sort((a,b) => Math.abs(a-area)-Math.abs(b-area))[0];
+      const cnt = bucket ? (bucketMap[bucket] || 0) : 0;
+      types.push({ dedicArea: area, hhldCnt: cnt, pyeong: Math.round(area/3.3058) });
+    });
+  } else {
+    // privArea 없으면 버킷만 사용
+    Object.entries(bucketMap).forEach(([area, cnt]) => {
+      types.push({ dedicArea: parseFloat(area), hhldCnt: cnt, pyeong: Math.round(parseFloat(area)/3.3058) });
     });
   }
+
   return types.length ? types.sort((a,b) => a.dedicArea-b.dedicArea) : null;
 }
