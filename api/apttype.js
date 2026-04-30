@@ -1,56 +1,55 @@
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
-  const { bjdCode, bun, bldNm, kaptCode } = req.query;
+  const { bjdCode, bun, bldNm, kaptCode, sigunguCd } = req.query;
   const KEY    = '9470763e33c0df8c9dfa6af03edbfbece3ac2adb4818385cbe32c2368b974ad5';
   const DETAIL = 'https://apis.data.go.kr/1613000/AptBasisInfoServiceV4';
   const LIST3  = 'https://apis.data.go.kr/1613000/AptListService3';
-  const H      = { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json', 'Referer': 'https://www.data.go.kr/' };
+  const H      = { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' };
 
   try {
-    // ── Mode A: kaptCode 직접 상세 조회 ────────────────────
+    // ── Mode A: kaptCode 직접 조회 ──────────────────────────
     if (kaptCode) {
       const url  = `${DETAIL}/getAphusBassInfoV4?serviceKey=${KEY}&kaptCode=${kaptCode}&_type=json`;
       const r    = await fetch(url, { headers: H });
-      const txt  = await r.text();
-      try {
-        const d    = JSON.parse(txt);
-        const item = d?.response?.body?.item;
-        if (!item?.kaptCode) return res.status(200).json({ result: null, message: 'kaptCode 없음', status: r.status, raw: txt.slice(0,200) });
-        return res.status(200).json({ result: buildResult(item), raw: item });
-      } catch(e) {
-        return res.status(200).json({ result: null, parseError: e.message, raw: txt.slice(0,200) });
-      }
+      const d    = await r.json();
+      const item = d?.response?.body?.item;
+      if (!item?.kaptCode) return res.status(200).json({ result: null, message: 'kaptCode 없음' });
+      return res.status(200).json({ result: buildResult(item) });
     }
 
-    // ── Mode B: 법정동코드로 단지 목록 검색 ────────────────
-    if (!bjdCode) return res.status(400).json({ error: 'bjdCode 또는 kaptCode 필요' });
+    if (!bjdCode && !sigunguCd) return res.status(400).json({ error: 'bjdCode 또는 kaptCode 필요' });
 
-    // loadCode 파라미터로 getLegaldongAptList3 호출
-    const listUrl = `${LIST3}/getLegaldongAptList3?serviceKey=${KEY}&loadCode=${bjdCode}&_type=json&numOfRows=100&pageNo=1`;
-    const r2  = await fetch(listUrl, { headers: H });
-    const txt2 = await r2.text();
+    // sigunguCd 추출 (bjdCode 앞 5자리)
+    const sgg = sigunguCd || bjdCode.slice(0, 5);
 
+    // ── Mode B: getSigunguAptList3로 시군구 전체 단지 검색 ──
+    // 페이지당 100개씩 최대 3페이지 (300개) 조회
     let complexList = [];
-    try {
-      const d2  = JSON.parse(txt2);
-      const cnt = d2?.response?.body?.totalCount || 0;
-      const raw = d2?.response?.body?.items?.item;
-      complexList = raw ? (Array.isArray(raw) ? raw : [raw]) : [];
-      if (!complexList.length) {
-        return res.status(200).json({
-          result: null, message: '단지 목록 없음',
-          debug: { loadCode: bjdCode, totalCount: cnt, status: r2.status, preview: txt2.slice(0,200) }
-        });
-      }
-    } catch(e) {
-      return res.status(200).json({ result: null, message: '파싱 실패', raw: txt2.slice(0,300) });
+    for (let page = 1; page <= 3; page++) {
+      const url = `${LIST3}/getSigunguAptList3?serviceKey=${KEY}&sigunguCd=${sgg}&_type=json&numOfRows=100&pageNo=${page}`;
+      const r   = await fetch(url, { headers: H });
+      const txt = await r.text();
+      try {
+        const d   = JSON.parse(txt);
+        const raw = d?.response?.body?.items?.item;
+        const arr = raw ? (Array.isArray(raw) ? raw : [raw]) : [];
+        complexList.push(...arr);
+        const total = d?.response?.body?.totalCount || 0;
+        if (complexList.length >= total) break;
+      } catch(e) { break; }
     }
 
-    // 번지 + 건물명으로 매칭
-    const bunNum = parseInt(bun || '0', 10);
-    let matched  = null;
+    if (!complexList.length) {
+      return res.status(200).json({ result: null, message: '시군구 단지 목록 없음', debug: { sgg } });
+    }
 
+    // 번지 + 법정동 + 건물명으로 매칭
+    const bunNum  = parseInt(bun || '0', 10);
+    const dongCode = bjdCode ? bjdCode.slice(5, 8) : ''; // 읍면동 3자리
+    let matched   = null;
+
+    // 1순위: 번지 매칭
     if (bunNum > 0) {
       matched = complexList.find(c => {
         const addr = c.kaptAddr || '';
@@ -58,6 +57,8 @@ export default async function handler(req, res) {
                addr.endsWith(` ${bunNum}`)    || addr.includes(` ${bunNum} `);
       });
     }
+
+    // 2순위: 건물명 매칭
     if (!matched && bldNm) {
       const kw = bldNm.replace(/\s/g,'').replace(/아파트/g,'');
       matched = complexList.find(c => {
@@ -65,6 +66,23 @@ export default async function handler(req, res) {
         return cn.includes(kw) || kw.includes(cn);
       });
     }
+
+    // 3순위: bjdCode 앞 8자리로 좁히기 (같은 동)
+    if (!matched && bjdCode) {
+      const dongList = complexList.filter(c => {
+        const code = c.bjdCode || c.kaptBjdCode || '';
+        return code.startsWith(bjdCode.slice(0,8));
+      });
+      if (dongList.length === 1) matched = dongList[0];
+      else if (dongList.length > 1 && bunNum > 0) {
+        matched = dongList.find(c => {
+          const addr = c.kaptAddr || '';
+          return addr.includes(String(bunNum));
+        });
+        if (!matched) matched = dongList[0];
+      }
+    }
+
     if (!matched) {
       return res.status(200).json({
         result: null, message: '자동 매칭 실패',
@@ -109,15 +127,10 @@ function buildResult(item) {
 function extractTypes(item) {
   if (!item) return null;
   const types = [];
-  // 언더스코어 포함 필드명: kaptMparea_60, kaptMparea_85, kaptMparea_135, kaptMparea_136
-  const areaKeys = ['60','85','135','136'];
-  areaKeys.forEach(key => {
-    const cnt = parseInt(item[`kaptMparea_${key}`] || item[`kaptMparea${key}`] || 0);
-    if (cnt > 0) {
-      types.push({ dedicArea: parseFloat(key), hhldCnt: cnt, pyeong: Math.round(parseFloat(key)/3.3058) });
-    }
+  ['60','85','135','136'].forEach(key => {
+    const cnt = parseInt(item[`kaptMparea${key}`] || 0);
+    if (cnt > 0) types.push({ dedicArea: parseFloat(key), hhldCnt: cnt, pyeong: Math.round(parseFloat(key)/3.3058) });
   });
-  // privArea 파싱 (전용면적 목록)
   if (!types.length && item.privArea) {
     item.privArea.split(',').forEach(s => {
       const a = parseFloat(s.trim());
