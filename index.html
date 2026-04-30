@@ -385,6 +385,10 @@ async function fetchLandArea(lng, lat, addrDoc){
         `✓ 건축물대장 자동 입력 — ${r.bldNm||'단지명 미상'} `+
         `(대지 ${Math.round(r.platArea).toLocaleString()}㎡ / 용적률 ${Math.round(r.vlRat)}% / ${r.hhldCnt}세대)`,
         '#2d6a0a');
+      // 건물명으로 평형 타입 자동 조회
+      if (r.bldNm && window._lastAddrDoc) {
+        fetchAptTypes(window._lastAddrDoc, r.bldNm);
+      }
     } else {
       landInput.style.background='';
       landInput.placeholder='12500';
@@ -413,7 +417,8 @@ async function fetchAptTypes(addrDoc, buildingName){
   typeGrid.innerHTML = '<div style="font-size:13px;color:#888;padding:8px 0"><span style="display:inline-block;width:12px;height:12px;border:2px solid #B5D4F4;border-top-color:#185FA5;border-radius:50%;animation:sp .6s linear infinite;margin-right:6px;vertical-align:middle"></span>평형 정보 조회 중...</div>';
 
   try {
-    const res  = await fetch(`/api/apttype?sigunguCd=${sigunguCd}&bjdongCd=${bjdongCd}&bun=${bun}&ji=${ji}&bldNm=${encodeURIComponent(bldNm)}`);
+    const bjdCode = bCode.slice(0,10);
+    const res  = await fetch(`/api/apttype?bjdCode=${bjdCode}&bun=${bun}&bldNm=${encodeURIComponent(bldNm)}`);
     const json = await res.json();
 
     if (json.result?.types && json.result.types.length > 0) {
