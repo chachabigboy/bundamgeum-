@@ -18,23 +18,21 @@ export default async function handler(req, res) {
 
     if (!bjdCode && !bldNm) return res.status(400).json({ error: 'bjdCode 또는 kaptCode 필요' });
 
-    // ── Mode B: kapt-db.json에서 검색 ──────────────────────
-    const bunNum   = parseInt(bun || '0', 10);
-    const nameKw   = (bldNm || '').replace(/\s/g,'').replace(/아파트/g,'');
-    const bjd8     = bjdCode ? bjdCode.slice(0,8) : '';
-    const sgg5     = bjdCode ? bjdCode.slice(0,5) : '';
+    const bunNum = parseInt(bun || '0', 10);
+    const nameKw = (bldNm || '').replace(/\s/g,'').replace(/아파트/g,'');
+    const bjd10  = bjdCode ? bjdCode.slice(0,10).padEnd(10,'0') : '';
+    const bjd8   = bjdCode ? bjdCode.slice(0,8) : '';
+    const sgg5   = bjdCode ? bjdCode.slice(0,5) : '';
 
-    // 1단계: 법정동코드 8자리 + 번지로 매칭
     let matched = null;
-    if (bjd8 && bunNum > 0) {
-      const dongFiltered = db.filter(c => c.b.startsWith(bjd8));
-      matched = dongFiltered.find(c =>
-        c.a.includes(`${bunNum}번지`) || c.a.includes(` ${bunNum}-`) ||
-        c.a.endsWith(` ${bunNum}`)    || c.a.includes(` ${bunNum} `)
-      );
+
+    // 1단계: bjdCode 정확 매칭 (동단위) + 번지
+    if (bjd10 && bunNum > 0) {
+      const dongFiltered = db.filter(c => c.b === bjd10 || c.b.startsWith(bjd8));
+      matched = dongFiltered.find(c => c.a.includes(String(bunNum)));
     }
 
-    // 2단계: 건물명으로 매칭
+    // 2단계: 건물명으로 시군구 내 매칭
     if (!matched && nameKw) {
       const sggFiltered = db.filter(c => c.b.startsWith(sgg5));
       matched = sggFiltered.find(c => {
@@ -43,22 +41,22 @@ export default async function handler(req, res) {
       });
     }
 
-    // 3단계: 시군구 내 번지 매칭
-    if (!matched && bunNum > 0 && sgg5) {
-      const sggFiltered = db.filter(c => c.b.startsWith(sgg5));
-      matched = sggFiltered.find(c =>
-        c.a.includes(`${bunNum}번지`) || c.a.includes(` ${bunNum}-`) ||
-        c.a.endsWith(` ${bunNum}`)
-      );
+    // 3단계: 같은 동(bjd8) 내 번지 포함
+    if (!matched && bjd8 && bunNum > 0) {
+      matched = db.find(c => c.b.startsWith(bjd8) && c.a.includes(String(bunNum)));
     }
 
+    // 4단계: 같은 동 첫번째 단지 (후보)
     if (!matched) {
-      // 같은 법정동 후보 반환
       const candidates = db
-        .filter(c => c.b.startsWith(bjd8 || sgg5))
+        .filter(c => bjd8 ? c.b.startsWith(bjd8) : c.b.startsWith(sgg5))
         .slice(0, 15)
-        .map(c => ({ kaptCode: c.c, name: c.n, addr: c.a }));
-      return res.status(200).json({ result: null, message: '자동 매칭 실패', candidates });
+        .map(c => ({ kaptCode: c.c, name: c.n, addr: c.a, bjdCode: c.b }));
+      return res.status(200).json({
+        result: null,
+        message: '자동 매칭 실패 — 후보에서 선택해주세요',
+        candidates
+      });
     }
 
     // 상세 조회
