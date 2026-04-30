@@ -464,7 +464,7 @@ function showCandidates(candidates){
   wrap.innerHTML = '<div style="font-size:12px;color:#e67e00;margin-bottom:6px">단지를 자동으로 찾지 못했습니다. 직접 선택해 주세요:</div>' +
     '<select id="cand-select" style="width:100%;padding:8px 12px;border:1px solid #dde3ee;border-radius:10px;font-size:13px" onchange="pickCandidate(this.value)">' +
     '<option value="">단지 선택...</option>' +
-    candidates.map(c => `<option value="${c.code}">${c.name} (${c.addr})</option>`).join('') +
+    candidates.map(c => `<option value="${c.kaptCode}">${c.name} (${c.addr})</option>`).join('') +
     '</select>';
   document.getElementById('own-grid').before(wrap);
 }
