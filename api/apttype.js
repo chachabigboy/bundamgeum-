@@ -1,4 +1,4 @@
-import db from '../kapt-db.json' assert { type: 'json' };
+import db from '../kapt-db.json' with { type: 'json' };
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
