@@ -28,7 +28,6 @@ export default async function handler(req, res) {
     const bjd8   = bjdCode ? bjdCode.slice(0,8) : '';
     const sgg5   = bjdCode ? bjdCode.slice(0,5) : '';
 
-    // kapt-db에서 단지 검색
     let matched = null;
     if (nameKw && sgg5) {
       const sggList = db.filter(c => c.b.startsWith(sgg5));
@@ -68,51 +67,47 @@ export default async function handler(req, res) {
   }
 }
 
-// ── 실거래가 XML 파싱으로 실제 전용면적 타입 추출 ───────────
+// ── 실거래가 XML 병렬 조회로 전용면적 타입 추출 ─────────────
 async function fetchTypesFromTrade(TRADE, KEY, sgg5, aptName, H) {
   if (!sgg5 || !aptName) return null;
 
-  const areaCount = {};
-  const nameKw = aptName.replace(/아파트/g,'').replace(/\s/g,'');
-  const now = new Date();
+  const nameKw = aptName.replace(/아파트/g,'').replace(/\s/g,'').trim();
+  const now    = new Date();
 
-  for (let i = 0; i < 24; i++) {
+  // 최근 12개월을 병렬로 한꺼번에 요청
+  const months = [];
+  for (let i = 0; i < 12; i++) {
     const d  = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const ym = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}`;
-
-    try {
-      const url = `${TRADE}?serviceKey=${KEY}&LAWD_CD=${sgg5}&DEAL_YMD=${ym}&numOfRows=1000`;
-      const r   = await fetch(url, { headers: H });
-      const xml = await r.text();
-
-      // XML에서 <item> 블록 추출
-      const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)];
-      let found = 0;
-
-      items.forEach(m => {
-        const block = m[1];
-        // 아파트명 추출
-        const nameMatch = block.match(/<aptNm>([^<]+)<\/aptNm>/);
-        if (!nameMatch) return;
-        const tName = nameMatch[1].replace(/아파트/g,'').replace(/\s/g,'');
-        if (!tName.includes(nameKw) && !nameKw.includes(tName)) return;
-
-        // 전용면적 추출
-        const areaMatch = block.match(/<excluUseAr>([\d.]+)<\/excluUseAr>/);
-        if (!areaMatch) return;
-        const area = parseFloat(areaMatch[1]);
-        if (area > 0) {
-          // 소수점 2자리로 그룹핑
-          const key = Math.round(area * 100) / 100;
-          areaCount[key] = (areaCount[key] || 0) + 1;
-          found++;
-        }
-      });
-
-      // 충분한 타입 확인 후 조기 종료
-      if (Object.keys(areaCount).length >= 2 && i >= 3) break;
-    } catch(e) { continue; }
+    months.push(`${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}`);
   }
+
+  const results = await Promise.allSettled(
+    months.map(ym =>
+      fetch(`${TRADE}?serviceKey=${KEY}&LAWD_CD=${sgg5}&DEAL_YMD=${ym}&numOfRows=1000`, { headers: H })
+        .then(r => r.text())
+    )
+  );
+
+  const areaCount = {};
+  results.forEach(r => {
+    if (r.status !== 'fulfilled') return;
+    const xml = r.value;
+    const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)];
+    items.forEach(m => {
+      const block = m[1];
+      const nameMatch = block.match(/<aptNm>([^<]+)<\/aptNm>/);
+      if (!nameMatch) return;
+      const tName = nameMatch[1].replace(/아파트/g,'').replace(/\s/g,'').trim();
+
+      // 유연한 이름 매칭
+      if (!tName.includes(nameKw) && !nameKw.includes(tName)) return;
+
+      const areaMatch = block.match(/<excluUseAr>([\d.]+)<\/excluUseAr>/);
+      if (!areaMatch) return;
+      const area = Math.round(parseFloat(areaMatch[1]) * 100) / 100;
+      if (area > 0) areaCount[area] = (areaCount[area] || 0) + 1;
+    });
+  });
 
   if (!Object.keys(areaCount).length) return null;
 
@@ -121,7 +116,6 @@ async function fetchTypesFromTrade(TRADE, KEY, sgg5, aptName, H) {
       dedicArea:  parseFloat(area),
       hhldCnt:    cnt,
       pyeong:     Math.round(parseFloat(area) / 3.3058),
-      tradeCount: cnt,
     }))
     .sort((a, b) => a.dedicArea - b.dedicArea);
 }
