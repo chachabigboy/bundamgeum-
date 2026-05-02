@@ -329,8 +329,8 @@ function selectAddr(i){
   const gu=(doc.address?.region_2depth_name||'').replace('구','');
   autoPrice(gu);
 
-  // 건축물대장 자동 조회 (완료 후 fetchAptTypes 자동 호출)
-  fetchLandArea(lng, lat, doc);
+  // K-apt + 실거래가로 단지 정보 + 평형 타입 한번에 조회
+  fetchAptTypes(doc, '');
 }
 
 // 건축물대장 총괄표제부 API — 대지면적 + 용적률 + 세대수 자동 조회
@@ -403,36 +403,42 @@ async function fetchLandArea(lng, lat, addrDoc){
 }
 
 
-// 공동주택 기본정보 API — 전용면적별 세대현황 조회
+// K-apt + 실거래가 기반 단지 정보 + 평형 타입 자동 조회
 async function fetchAptTypes(addrDoc, buildingName){
   const addr    = addrDoc.address || {};
   const bCode   = addr.b_code    || '';
-  const sigunguCd = bCode.slice(0,5);
-  const bjdongCd  = bCode.slice(5,10);
   const bun     = addr.main_address_no || '0';
   const ji      = addr.sub_address_no  || '0';
   const bldNm   = buildingName || '';
 
-  const typeGrid = document.getElementById('own-grid');
-  typeGrid.innerHTML = '<div style="font-size:13px;color:#888;padding:8px 0"><span style="display:inline-block;width:12px;height:12px;border:2px solid #B5D4F4;border-top-color:#185FA5;border-radius:50%;animation:sp .6s linear infinite;margin-right:6px;vertical-align:middle"></span>평형 정보 조회 중...</div>';
+  const landInput   = document.getElementById('land-area');
+  const ratioInput  = document.getElementById('floor-ratio');
+  const unitsInput  = document.getElementById('total-units');
+  const memberInput = document.getElementById('member-units');
+  const typeGrid    = document.getElementById('own-grid');
+
+  // 로딩 표시
+  landInput.style.background='#fffbe6';
+  landInput.value='';
+  landInput.placeholder='조회 중...';
+  typeGrid.innerHTML = '<div style="font-size:13px;color:#888;padding:8px 0"><span style="display:inline-block;width:12px;height:12px;border:2px solid #B5D4F4;border-top-color:#185FA5;border-radius:50%;animation:sp .6s linear infinite;margin-right:6px;vertical-align:middle"></span>단지 정보 조회 중...</div>';
 
   try {
     const bjdCode = bCode.slice(0,10);
     const res  = await fetch(`/api/apttype?bjdCode=${bjdCode}&bun=${bun}&ji=${ji}&bldNm=${encodeURIComponent(bldNm)}`);
     const json = await res.json();
 
-    if (json.result?.types && json.result.types.length > 0) {
+    if (json.result) {
       const kr = json.result;
 
-      // K-apt 데이터로 대지면적/세대수 덮어쓰기 (건축물대장보다 정확)
-      const landInput   = document.getElementById('land-area');
-      const ratioInput  = document.getElementById('floor-ratio');
-      const unitsInput  = document.getElementById('total-units');
-      const memberInput = document.getElementById('member-units');
-
+      // ── 1단계 데이터 즉시 반영 ──────────────────────────
       if (kr.platArea > 0) {
         landInput.value = Math.round(kr.platArea);
         landInput.style.background = '#f0fff4';
+      } else {
+        landInput.value = '';
+        landInput.placeholder = '직접 입력';
+        landInput.style.background = '';
       }
       if (kr.vlRat > 0) {
         ratioInput.value = Math.round(kr.vlRat);
@@ -443,23 +449,22 @@ async function fetchAptTypes(addrDoc, buildingName){
         memberInput.value = Math.round(kr.hhldCnt * 0.6);
       }
 
-      // 타입으로 OWN 동적 교체
-      OWN = kr.types.map((t, i) => ({
-        id:    'o' + (i+1),
-        name:  Math.round(t.dedicArea) + '㎡형 (' + t.pyeong + '평)',
-        py:    t.pyeong,
-        area:  Math.round(t.dedicArea),
-        share: Math.round(t.dedicArea * 0.55 / 3.3058),
-        pp:    Math.round(8000 + t.pyeong * 100),
-        hhld:  t.hhldCnt,
-      }));
+      // 성공 배너
+      setHint('land-area',
+        `✓ ${kr.kaptName||'단지'} — 대지 ${Math.round(kr.platArea||0).toLocaleString()}㎡ / 용적률 ${Math.round(kr.vlRat||0)}% / ${kr.hhldCnt||0}세대`,
+        '#2d6a0a');
 
-      // 단지명 + 세대수 표시
-      if (kr.kaptName) {
-        const banner = document.createElement('div');
-        banner.style.cssText = 'font-size:12px;color:#2d6a0a;margin-bottom:8px;font-weight:500';
-        banner.textContent   = '✓ ' + kr.kaptName + ' — ' + OWN.length + '개 타입 / ' + (kr.hhldCnt||'') + '세대';
-        typeGrid.before(banner);
+      // ── 평형 타입 반영 ───────────────────────────────────
+      if (kr.types && kr.types.length > 0) {
+        OWN = kr.types.map((t, i) => ({
+          id:    'o' + (i+1),
+          name:  Math.round(t.dedicArea) + '㎡형 (' + t.pyeong + '평)',
+          py:    t.pyeong,
+          area:  Math.round(t.dedicArea),
+          share: Math.round(t.dedicArea * 0.55 / 3.3058),
+          pp:    Math.round(8000 + t.pyeong * 100),
+          hhld:  t.hhldCnt,
+        }));
       }
       renderOwn();
     } else {
