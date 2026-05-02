@@ -3,9 +3,9 @@ export default async function handler(req, res) {
   const KEY   = '9470763e33c0df8c9dfa6af03edbfbece3ac2adb4818385cbe32c2368b974ad5';
   const TRADE = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev';
 
-  const { sgg, road } = req.query;
-  const LAWD = sgg  || '41410';
-  const ROAD = road || '고산로539번길';
+  const { sgg, bonbun } = req.query;
+  const LAWD   = sgg    || '41410';
+  const BONBUN = bonbun || '1148'; // 묘향롯데 지번 본번
 
   const now = new Date();
   const months = Array.from({length: 36}, (_,i) => {
@@ -20,15 +20,17 @@ export default async function handler(req, res) {
     )
   );
 
-  // 도로명 매칭 단지명 + 전용면적 모두 수집
-  const nameAreaMap = {}; // { 단지명: Set(면적들) }
+  const nameAreaMap = {};
 
   results.forEach(r => {
     if (r.status !== 'fulfilled') return;
     [...r.value.matchAll(/<item>([\s\S]*?)<\/item>/g)].forEach(m => {
       const block = m[1];
-      const roadNm = block.match(/<roadNm>([^<]+)<\/roadNm>/)?.[1]?.trim() || '';
-      if (!roadNm.includes(ROAD) && !ROAD.includes(roadNm)) return;
+
+      // 지번 본번 매칭
+      const bonMatch = block.match(/<bonbun>(\d+)<\/bonbun>/);
+      if (!bonMatch) return;
+      if (bonMatch[1].replace(/^0+/,'') !== BONBUN.replace(/^0+/,'')) return;
 
       const aptNm = block.match(/<aptNm>([^<]+)<\/aptNm>/)?.[1]?.trim() || '';
       const area  = Math.round(parseFloat(block.match(/<excluUseAr>([\d.]+)<\/excluUseAr>/)?.[1] || 0) * 100) / 100;
@@ -39,6 +41,7 @@ export default async function handler(req, res) {
   });
 
   return res.status(200).json({
+    bonbun: BONBUN,
     complexes: Object.entries(nameAreaMap).map(([name, areas]) => ({
       name,
       areas: [...areas].sort((a,b) => a-b),
