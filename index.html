@@ -145,14 +145,7 @@
           <div class="iu"><input id="floor-ratio" type="number" value="270"/><span>%</span></div>
         </div>
       </div>
-      <div class="field">
-        <label>인근 신축 시세 (평당) <span class="tip"><span class="tip-icon">?</span><span class="tip-box">준공 5년 이내 아파트의 최근 6개월 평균 실거래가 기준입니다. 일반분양가 산정의 기준이 됩니다.</span></span></label>
-        <div style="display:flex;gap:8px">
-          <div class="iu" style="flex:1"><input id="nearby-price" type="number" value="8500"/><span>만원/평</span></div>
-          <button onclick="autoPrice()" style="padding:10px 14px;background:#f0f7ff;color:#185FA5;border:1px solid #B5D4F4;border-radius:10px;font-size:13px;cursor:pointer;white-space:nowrap">지역 추정</button>
-        </div>
-        <div id="price-hint" class="hidden" style="font-size:12px;color:#2d6a0a;margin-top:4px"></div>
-      </div>
+      <input type="hidden" id="nearby-price" value="8500"/>
       <button class="btn-primary" onclick="goStep2()">다음 단계 →</button>
     </div>
   </div>
@@ -329,8 +322,75 @@ function selectAddr(i){
   const gu=(doc.address?.region_2depth_name||'').replace('구','');
   autoPrice(gu);
 
-  // K-apt + 실거래가로 단지 정보 + 평형 타입 한번에 조회
-  fetchAptTypes(doc, '');
+  // 단지명만 빠르게 매칭해서 보여주기
+  matchComplex(doc);
+}
+
+// 단지명 매칭 (1단계에서는 이름만 확인)
+async function matchComplex(addrDoc){
+  const addr   = addrDoc.address || {};
+  const bCode  = addr.b_code || '';
+  const bun    = addr.main_address_no || '0';
+  const ji     = addr.sub_address_no  || '0';
+  const bjdCode = bCode.slice(0,10);
+
+  const complexDiv = document.getElementById('complex-confirm');
+  complexDiv.innerHTML = '<span style="font-size:13px;color:#888">단지 확인 중...</span>';
+  complexDiv.classList.remove('hidden');
+
+  try {
+    const res  = await fetch(`/api/aptinfo?bjdCode=${bjdCode}&bun=${bun}&ji=${ji}`);
+    const json = await res.json();
+
+    if (json.result) {
+      const kr = json.result;
+      window._matchedKapt = kr; // 나중에 사용
+      complexDiv.innerHTML =
+        `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:14px;font-weight:600;color:#1a1a2e">🏢 ${kr.kaptName}</span>
+          <span style="font-size:12px;color:#888">${kr.hhldCnt}세대 · ${kr.dongCnt}개동</span>
+          <button onclick="changeComplex()" style="font-size:12px;padding:4px 10px;background:#f4f6f9;border:1px solid #dde3ee;border-radius:6px;cursor:pointer;color:#666">단지 변경</button>
+        </div>`;
+    } else if (json.candidates?.length) {
+      window._matchedKapt = null;
+      let opts = json.candidates.map(c =>
+        `<option value="${c.kaptCode}">${c.name} (${c.addr})</option>`
+      ).join('');
+      complexDiv.innerHTML =
+        `<div style="font-size:12px;color:#e67e00;margin-bottom:6px">단지를 직접 선택해 주세요:</div>
+         <select id="complex-select" style="width:100%;padding:8px 12px;border:1px solid #dde3ee;border-radius:10px;font-size:13px" onchange="selectComplex(this.value)">
+           <option value="">선택...</option>${opts}
+         </select>`;
+    } else {
+      complexDiv.innerHTML = '<span style="font-size:13px;color:#e67e00">단지를 찾지 못했습니다. 직접 진행해 주세요.</span>';
+    }
+  } catch(e) {
+    complexDiv.innerHTML = '<span style="font-size:13px;color:#e67e00">조회 실패. 직접 진행해 주세요.</span>';
+  }
+}
+
+function changeComplex(){
+  document.getElementById('complex-confirm').innerHTML =
+    `<select id="complex-select" style="width:100%;padding:8px 12px;border:1px solid #dde3ee;border-radius:10px;font-size:13px" onchange="selectComplex(this.value)">
+      <option value="">단지명 입력 후 검색...</option>
+    </select>`;
+}
+
+async function selectComplex(kaptCode){
+  if (!kaptCode) return;
+  try {
+    const res  = await fetch(`/api/aptinfo?kaptCode=${kaptCode}`);
+    const json = await res.json();
+    if (json.result) {
+      window._matchedKapt = json.result;
+      document.getElementById('complex-confirm').innerHTML =
+        `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:14px;font-weight:600;color:#1a1a2e">🏢 ${json.result.kaptName}</span>
+          <span style="font-size:12px;color:#888">${json.result.hhldCnt}세대 · ${json.result.dongCnt}개동</span>
+          <button onclick="changeComplex()" style="font-size:12px;padding:4px 10px;background:#f4f6f9;border:1px solid #dde3ee;border-radius:6px;cursor:pointer;color:#666">단지 변경</button>
+        </div>`;
+    }
+  } catch(e) { console.error(e); }
 }
 
 // 건축물대장 총괄표제부 API — 대지면적 + 용적률 + 세대수 자동 조회
