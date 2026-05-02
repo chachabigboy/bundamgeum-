@@ -3,12 +3,10 @@ export default async function handler(req, res) {
   const KEY   = '9470763e33c0df8c9dfa6af03edbfbece3ac2adb4818385cbe32c2368b974ad5';
   const TRADE = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev';
 
-  const { sgg, road, bonbun } = req.query;
-  const LAWD = sgg    || '41410';
-  const ROAD = road   || '고산로539번길';
-  const BON  = bonbun || '7';
+  const { sgg, road } = req.query;
+  const LAWD = sgg  || '41410';
+  const ROAD = road || '고산로539번길';
 
-  // 최근 36개월 병렬 조회
   const now = new Date();
   const months = Array.from({length: 36}, (_,i) => {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
@@ -22,24 +20,29 @@ export default async function handler(req, res) {
     )
   );
 
-  const areaCount = {};
+  // 도로명 매칭 단지명 + 전용면적 모두 수집
+  const nameAreaMap = {}; // { 단지명: Set(면적들) }
+
   results.forEach(r => {
     if (r.status !== 'fulfilled') return;
     [...r.value.matchAll(/<item>([\s\S]*?)<\/item>/g)].forEach(m => {
       const block = m[1];
       const roadNm = block.match(/<roadNm>([^<]+)<\/roadNm>/)?.[1]?.trim() || '';
-      const bonNum = parseInt(block.match(/<roadNmBonbun>(\d+)<\/roadNmBonbun>/)?.[1] || '0');
       if (!roadNm.includes(ROAD) && !ROAD.includes(roadNm)) return;
-      if (BON && parseInt(BON) !== bonNum) return;
-      const area = Math.round(parseFloat(block.match(/<excluUseAr>([\d.]+)<\/excluUseAr>/)?.[1] || 0) * 100) / 100;
-      if (area > 0) areaCount[area] = (areaCount[area] || 0) + 1;
+
+      const aptNm = block.match(/<aptNm>([^<]+)<\/aptNm>/)?.[1]?.trim() || '';
+      const area  = Math.round(parseFloat(block.match(/<excluUseAr>([\d.]+)<\/excluUseAr>/)?.[1] || 0) * 100) / 100;
+
+      if (!nameAreaMap[aptNm]) nameAreaMap[aptNm] = new Set();
+      if (area > 0) nameAreaMap[aptNm].add(area);
     });
   });
 
   return res.status(200).json({
-    months: months.length,
-    types: Object.entries(areaCount)
-      .map(([a,c]) => ({ area: parseFloat(a), pyeong: Math.round(parseFloat(a)/3.3058), count: c }))
-      .sort((a,b) => a.area - b.area)
+    complexes: Object.entries(nameAreaMap).map(([name, areas]) => ({
+      name,
+      areas: [...areas].sort((a,b) => a-b),
+      pyeongs: [...areas].sort((a,b) => a-b).map(a => Math.round(a/3.3058))
+    }))
   });
 }
