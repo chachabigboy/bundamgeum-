@@ -403,7 +403,7 @@ async function fetchLandArea(lng, lat, addrDoc){
 }
 
 
-// K-apt + 실거래가 기반 단지 정보 + 평형 타입 자동 조회
+// K-apt + 실거래가 기반 단지 정보 + 평형 타입 자동 조회 (2단계)
 async function fetchAptTypes(addrDoc, buildingName){
   const addr    = addrDoc.address || {};
   const bCode   = addr.b_code    || '';
@@ -422,6 +422,79 @@ async function fetchAptTypes(addrDoc, buildingName){
   landInput.value='';
   landInput.placeholder='조회 중...';
   typeGrid.innerHTML = '<div style="font-size:13px;color:#888;padding:8px 0"><span style="display:inline-block;width:12px;height:12px;border:2px solid #B5D4F4;border-top-color:#185FA5;border-radius:50%;animation:sp .6s linear infinite;margin-right:6px;vertical-align:middle"></span>단지 정보 조회 중...</div>';
+
+  // ── 1단계: K-apt 기본 정보 빠르게 로드 ─────────────────
+  const bjdCode = bCode.slice(0,10);
+  try {
+    const infoRes  = await fetch(`/api/aptinfo?bjdCode=${bjdCode}&bun=${bun}&ji=${ji}&bldNm=${encodeURIComponent(bldNm)}`);
+    const infoJson = await infoRes.json();
+    if (infoJson.result) {
+      const kr = infoJson.result;
+      // 즉시 화면 반영
+      if (kr.platArea > 0) { landInput.value = Math.round(kr.platArea); landInput.style.background='#f0fff4'; }
+      else { landInput.value=''; landInput.placeholder='직접 입력'; landInput.style.background=''; }
+      if (kr.vlRat > 0) { ratioInput.value = Math.round(kr.vlRat); ratioInput.style.background='#f0fff4'; }
+      if (kr.hhldCnt > 0) { unitsInput.value = kr.hhldCnt; memberInput.value = Math.round(kr.hhldCnt*0.6); }
+      setHint('land-area',
+        `✓ ${kr.kaptName||'단지'} — 대지 ${Math.round(kr.platArea||0).toLocaleString()}㎡ / 용적률 ${Math.round(kr.vlRat||0)}% / ${kr.hhldCnt||0}세대`,
+        '#2d6a0a');
+      // kaptCode 저장 후 2단계 타입 조회
+      window._lastKaptCode = kr.kaptCode;
+      window._lastSgg5     = (kr.kaptAddr||'').slice(0,5) || bjdCode.slice(0,5);
+      typeGrid.innerHTML = '<div style="font-size:13px;color:#888;padding:8px 0"><span style="display:inline-block;width:12px;height:12px;border:2px solid #B5D4F4;border-top-color:#185FA5;border-radius:50%;animation:sp .6s linear infinite;margin-right:6px;vertical-align:middle"></span>평형 타입 조회 중...</div>';
+      // 비동기로 타입 로드 (기다리지 않음)
+      fetchTypesAsync(kr.kaptCode, bjdCode.slice(0,5), bun, typeGrid, kr.kaptName);
+    } else if (infoJson.candidates) {
+      landInput.value=''; landInput.placeholder='직접 입력'; landInput.style.background='';
+      setHint('land-area','단지를 자동으로 찾지 못했습니다.','#e67e00');
+      showCandidates(infoJson.candidates);
+      typeGrid.innerHTML='';
+      renderOwn();
+    }
+  } catch(e) {
+    landInput.value=''; landInput.placeholder='직접 입력'; landInput.style.background='';
+    console.error('aptinfo 오류:', e);
+    typeGrid.innerHTML=''; renderOwn();
+  }
+}
+
+// ── 2단계: 실거래 타입 비동기 로드 ──────────────────────────
+async function fetchTypesAsync(kaptCode, sgg5, bun, typeGrid, kaptName){
+  try {
+    const res  = await fetch(`/api/apttype?kaptCode=${kaptCode}&sigunguCd=${sgg5}&bun=${bun}`);
+    const json = await res.json();
+    if (json.result?.types?.length) {
+      OWN = json.result.types.map((t,i) => ({
+        id:    'o'+(i+1),
+        name:  Math.round(t.dedicArea)+'㎡형 ('+t.pyeong+'평)',
+        py:    t.pyeong,
+        area:  Math.round(t.dedicArea),
+        share: Math.round(t.dedicArea*0.55/3.3058),
+        pp:    Math.round(8000+t.pyeong*100),
+        hhld:  t.hhldCnt,
+      }));
+      const banner = document.createElement('div');
+      banner.style.cssText='font-size:12px;color:#2d6a0a;margin-bottom:8px;font-weight:500';
+      banner.textContent='✓ '+kaptName+' — '+OWN.length+'개 타입 조회 완료';
+      typeGrid.innerHTML='';
+      typeGrid.before(banner);
+    } else {
+      typeGrid.innerHTML='';
+    }
+    renderOwn();
+  } catch(e) {
+    typeGrid.innerHTML=''; renderOwn();
+  }
+}
+
+// ── (구) fetchAptTypes 내부 실제 조회 로직 (더미 - 아래 코드와 병합됨) ──
+async function _fetchAptTypesLegacy(addrDoc, buildingName){
+  const addr    = addrDoc.address || {};
+  const bCode   = addr.b_code    || '';
+  const bun     = addr.main_address_no || '0';
+  const ji      = addr.sub_address_no  || '0';
+  const bldNm   = buildingName || '';
+  const typeGrid    = document.getElementById('own-grid');
 
   try {
     const bjdCode = bCode.slice(0,10);
