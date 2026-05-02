@@ -422,22 +422,43 @@ async function fetchAptTypes(addrDoc, buildingName){
     const json = await res.json();
 
     if (json.result?.types && json.result.types.length > 0) {
-      // API에서 받은 타입으로 OWN 동적 교체
-      OWN = json.result.types.map((t, i) => ({
+      const kr = json.result;
+
+      // K-apt 데이터로 대지면적/세대수 덮어쓰기 (건축물대장보다 정확)
+      const landInput   = document.getElementById('land-area');
+      const ratioInput  = document.getElementById('floor-ratio');
+      const unitsInput  = document.getElementById('total-units');
+      const memberInput = document.getElementById('member-units');
+
+      if (kr.platArea > 0) {
+        landInput.value = Math.round(kr.platArea);
+        landInput.style.background = '#f0fff4';
+      }
+      if (kr.vlRat > 0) {
+        ratioInput.value = Math.round(kr.vlRat);
+        ratioInput.style.background = '#f0fff4';
+      }
+      if (kr.hhldCnt > 0) {
+        unitsInput.value  = kr.hhldCnt;
+        memberInput.value = Math.round(kr.hhldCnt * 0.6);
+      }
+
+      // 타입으로 OWN 동적 교체
+      OWN = kr.types.map((t, i) => ({
         id:    'o' + (i+1),
         name:  Math.round(t.dedicArea) + '㎡형 (' + t.pyeong + '평)',
         py:    t.pyeong,
         area:  Math.round(t.dedicArea),
-        share: Math.round(t.dedicArea * 0.55 / 3.3058), // 대지지분 추정
-        pp:    Math.round(8000 + t.pyeong * 100),        // 평당 시세 추정
+        share: Math.round(t.dedicArea * 0.55 / 3.3058),
+        pp:    Math.round(8000 + t.pyeong * 100),
         hhld:  t.hhldCnt,
       }));
 
-      // 단지명 표시
-      if (json.result.kaptName) {
+      // 단지명 + 세대수 표시
+      if (kr.kaptName) {
         const banner = document.createElement('div');
         banner.style.cssText = 'font-size:12px;color:#2d6a0a;margin-bottom:8px;font-weight:500';
-        banner.textContent   = '✓ ' + json.result.kaptName + ' — 전용면적별 ' + OWN.length + '개 타입 조회 완료';
+        banner.textContent   = '✓ ' + kr.kaptName + ' — ' + OWN.length + '개 타입 / ' + (kr.hhldCnt||'') + '세대';
         typeGrid.before(banner);
       }
       renderOwn();
