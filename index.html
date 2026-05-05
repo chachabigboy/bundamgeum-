@@ -116,36 +116,31 @@
   <!-- STEP 1 -->
   <div id="page1">
     <div class="card">
-      <div class="card-title">재건축/재개발 단지 주소를 입력해 주세요</div>
+      <div class="card-title">재건축 단지 주소를 입력해 주세요</div>
+
+      <!-- 주소 검색 -->
       <div class="field addr-wrap">
         <label>주소 검색 <span style="font-size:11px;color:#185FA5;font-weight:500">카카오맵 실시간 연동</span></label>
         <div class="addr-input-row">
-          <input id="addr-input" type="text" placeholder="예: 서울 강남구 개포동 12" oninput="onAddrInput(this.value)" onkeydown="if(event.key==='Enter')doSearch()"/>
+          <input id="addr-input" type="text" placeholder="예: 경기 군포시 산본동 1148"
+            oninput="onAddrInput(this.value)" onkeydown="if(event.key==='Enter')doSearch()" autocomplete="off"/>
           <button class="addr-btn" onclick="doSearch()">검색</button>
         </div>
         <div class="ac-list hidden" id="ac-list"></div>
       </div>
 
-      <div id="addr-result" class="hidden">
-        <div class="ok-box" id="addr-ok"></div>
-        <div id="nearby-wrap" class="hidden">
-          <div style="font-size:12px;color:#666;font-weight:500">인근 아파트 단지</div>
-          <div class="nearby-chips" id="nearby-chips"></div>
-        </div>
-        <hr class="divider"/>
-      </div>
+      <!-- 단지 확인 영역 -->
+      <div id="complex-confirm" class="hidden" style="padding:14px;background:#f8f9fb;border-radius:10px;border:1px solid #dde3ee;margin-bottom:14px"></div>
 
-      <div class="frow">
-        <div class="field">
-          <label>대지면적 <span class="tip"><span class="tip-icon">?</span><span class="tip-box">재건축 구역 전체 토지 면적입니다. 주소 검색 시 자동으로 추정됩니다.</span></span></label>
-          <div class="iu"><input id="land-area" type="number" value="12500"/><span>㎡</span></div>
-        </div>
-        <div class="field">
-          <label>용적률 <span class="tip"><span class="tip-icon">?</span><span class="tip-box">인근 신축 아파트의 평균 용적률입니다. 2종 주거지역 250%, 3종 주거지역 300%가 일반적입니다.</span></span></label>
-          <div class="iu"><input id="floor-ratio" type="number" value="270"/><span>%</span></div>
-        </div>
-      </div>
+      <!-- hidden inputs (계산용) -->
+      <input type="hidden" id="land-area" value="0"/>
+      <input type="hidden" id="floor-ratio" value="250"/>
       <input type="hidden" id="nearby-price" value="8500"/>
+      <input type="hidden" id="total-units" value="500"/>
+      <input type="hidden" id="member-units" value="300"/>
+      <input type="hidden" id="const-cost" value="700"/>
+      <input type="hidden" id="other-ratio" value="25"/>
+
       <button class="btn-primary" onclick="goStep2()">다음 단계 →</button>
     </div>
   </div>
